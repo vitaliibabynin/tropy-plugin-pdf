@@ -12,7 +12,10 @@ export default {
     generatedCode: 'es2015'
   },
   external: [
-    'electron'
+    'electron',
+    'fs',
+    'path',
+    'pdfkit'
   ],
   plugins: [
     resolve({

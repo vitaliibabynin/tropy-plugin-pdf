@@ -93,4 +93,27 @@ describe('Plugin export function', async () => {
 
     expect(photo['path']).to.equal(`${imagesDir}/${originalFileName}`)
   })
+
+  it('generates PDF files for items with photos', async () => {
+    await plugin.export(data)
+    
+    const writeFileCalls = writeFileSpy.getCalls()
+    const pdfFiles = writeFileCalls.filter(call => 
+      call.args[0].endsWith('.pdf')
+    )
+    
+    // Should have one PDF per item with photos
+    const itemsWithPhotos = data['@graph'].filter(item => 
+      item.photo && item.photo.length > 0
+    )
+    expect(pdfFiles.length).to.equal(itemsWithPhotos.length)
+    
+    // PDF files should be named after items
+    itemsWithPhotos.forEach(item => {
+      const hasPDF = pdfFiles.some(call => 
+        call.args[0].endsWith(`${item.title}.pdf`)
+      )
+      expect(hasPDF).to.be.true
+    })
+  })
 })
