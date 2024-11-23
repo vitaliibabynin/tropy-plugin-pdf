@@ -2,8 +2,10 @@
 
 const { join, extname } = require('path')
 const PDFDocument = require('pdfkit')
-const { createWriteStream } = require('fs')
+const { createWriteStream, copyFile } = require('fs')
 const { shell } = require('electron')
+const { promisify } = require('util')
+const copyFileAsync = promisify(copyFile)
 
 class PDFOriginalPlugin {
   constructor(options, context) {
@@ -17,6 +19,15 @@ class PDFOriginalPlugin {
   }
 
   async generatePDF(data, outputPath) {
+    // Check if we're dealing with PDF photos
+    const firstPhoto = data['@graph'][0]?.photo?.[0]
+    if (firstPhoto?.mimetype === 'application/pdf') {
+      // For PDF files, copy the first photo's PDF file
+      // This will be the original PDF that was imported
+      await copyFileAsync(firstPhoto.path, outputPath)
+      return
+    }
+
     const doc = new PDFDocument({ 
       autoFirstPage: false,
       size: 'A4',  // Always A4
@@ -110,6 +121,12 @@ class PDFOriginalPlugin {
     const defaultTitle = data['@graph'][0]?.title || 'export'
     const defaultPdfFile = `${defaultTitle}.pdf`
 
+    // Check if we're dealing with a PDF file
+    const firstPhoto = data['@graph'][0]?.photo?.[0]
+    const isPDF = firstPhoto?.mimetype === 'application/pdf'
+
+    // Remove the multiple PDF check since multiple photos can come from the same PDF
+    
     if (!pdfFile || this.options.prompt) {
       pdfFile = await this.dialog({ 
         defaultPath: defaultPdfFile,
@@ -124,7 +141,7 @@ class PDFOriginalPlugin {
       throw new Error(`not a pdf file: ${pdfFile}`)
     }
 
-    // Generate the PDF
+    // Generate the PDF or copy the original PDF
     await this.generatePDF(data, pdfFile)
 
     // Open the PDF file directly instead of showing in folder
