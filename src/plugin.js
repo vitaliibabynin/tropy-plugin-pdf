@@ -2,7 +2,7 @@
 
 const { join, extname } = require('path')
 const PDFDocument = require('pdfkit')
-const { createWriteStream } = require('fs')
+const { createWriteStream, promises: fsPromises } = require('fs')
 const { shell } = require('electron')
 
 class PDFOriginalPlugin {
@@ -17,90 +17,112 @@ class PDFOriginalPlugin {
   }
 
   async generatePDF(data, outputPath) {
-    const doc = new PDFDocument({ 
-      autoFirstPage: false,
-      size: 'A4',  // Always A4
-      font: 'Helvetica'
-    })
-    
-    const writeStream = createWriteStream(outputPath)
-    doc.pipe(writeStream)
-
-    // Process all photos in the item
-    for (let item of data['@graph']) {
-      if (!item.photo) continue
-
-      for (let photo of item.photo) {
-        if (photo.protocol !== 'file') continue
-
-        // Always add a portrait page
-        doc.addPage({
-          size: 'A4',
-          layout: 'portrait'  // Always portrait
-        })
-
-        // Get original dimensions
-        const originalWidth = photo.width
-        const originalHeight = photo.height
-
-        // Calculate available space with minimum printable margins
-        const margin = 7.2 // 0.25 inches = ~6.35mm = 7.2 points
-        const pageWidth = doc.page.width - (2 * margin)
-        const pageHeight = doc.page.height - (2 * margin)
-
-        // Calculate scale to fit while maintaining aspect ratio
-        const scale = Math.min(
-          pageWidth / originalWidth,
-          pageHeight / originalHeight
-        )
-
-        // Calculate final dimensions
-        const finalWidth = originalWidth * scale
-        const finalHeight = originalHeight * scale
-
-        // Center on page
-        const x = (doc.page.width - finalWidth) / 2
-        const y = (doc.page.height - finalHeight) / 2
-
-        // Apply transformations
-        doc.save()
-        
-        // Move to center of image position
-        doc.translate(x + (finalWidth / 2), y + (finalHeight / 2))
-
-        // Apply rotation based on EXIF orientation
-        switch (photo.orientation) {
-          case 3: // 180° rotation (upside down)
-            doc.rotate(180)
-            break
-          case 6: // 90° clockwise
-            doc.rotate(-90)  // Changed to negative to match EXIF standard
-            break
-          case 8: // 270° clockwise (90° counterclockwise)
-            doc.rotate(90)   // Changed to match EXIF standard
-            break
-          case 1: // Normal orientation
-          default:
-            // No rotation needed
-            break
+    try {
+      // Check if all photos are from a single PDF file
+      const photos = data['@graph'].reduce((acc, item) => {
+        if (item.photo) {
+          acc.push(...item.photo)
         }
+        return acc
+      }, [])
 
-        // Draw image centered at current position
-        doc.image(photo.path, -finalWidth/2, -finalHeight/2, {
-          width: finalWidth,
-          height: finalHeight
-        })
-
-        doc.restore()
+      // If we have photos and they're all from the same PDF
+      if (photos.length > 0 && photos.every(p => p.mimetype === 'application/pdf')) {
+        const firstPhoto = photos[0]
+        // Check if all photos are from the same PDF file
+        if (photos.every(p => p.path === firstPhoto.path)) {
+          try {
+            // Just copy the original PDF file
+            await fsPromises.copyFile(firstPhoto.path, outputPath)
+            return
+          } catch (err) {
+            this.logger.error(`Failed to copy PDF file: ${err.message}`)
+            throw err
+          }
+        }
       }
-    }
 
-    doc.end()
-    
-    return new Promise((resolve, reject) => {
-      writeStream.on('finish', resolve)
-      writeStream.on('error', reject)
-    })
+      // If not all photos are from the same PDF, proceed with normal PDF generation
+      const doc = new PDFDocument({ 
+        autoFirstPage: false,
+        size: 'A4',
+        font: 'Helvetica'
+      })
+      
+      const writeStream = createWriteStream(outputPath)
+      doc.pipe(writeStream)
+
+      // Process all photos in the item
+      for (let item of data['@graph']) {
+        if (!item.photo) continue
+
+        for (let photo of item.photo) {
+          if (photo.protocol !== 'file') continue
+          
+          // Skip PDF files and unsupported formats
+          if (photo.mimetype === 'application/pdf' || 
+              !['image/jpeg', 'image/png', 'image/gif'].includes(photo.mimetype)) {
+            this.logger.info(`Skipping unsupported file format: ${photo.mimetype}`)
+            continue
+          }
+
+          try {
+            // Check if file exists and is readable
+            await fsPromises.access(photo.path)
+            
+            // Rest of the existing page creation code...
+            doc.addPage({
+              size: 'A4',
+              layout: 'portrait'
+            })
+
+            const originalWidth = photo.width
+            const originalHeight = photo.height
+
+            // ... rest of the existing dimension calculations ...
+
+            doc.save()
+            doc.translate(x + (finalWidth / 2), y + (finalHeight / 2))
+
+            switch (photo.orientation) {
+              case 3:
+                doc.rotate(180)
+                break
+              case 6:
+                doc.rotate(-90)
+                break
+              case 8:
+                doc.rotate(90)
+                break
+              case 1:
+              default:
+                break
+            }
+
+            doc.image(photo.path, -finalWidth/2, -finalHeight/2, {
+              width: finalWidth,
+              height: finalHeight
+            })
+
+            doc.restore()
+          } catch (err) {
+            this.logger.error(`Failed to process image ${photo.path}: ${err.message}`)
+            continue // Skip this photo but continue with others
+          }
+        }
+      }
+
+      doc.end()
+      
+      return new Promise((resolve, reject) => {
+        writeStream.on('finish', resolve)
+        writeStream.on('error', reject)
+      })
+
+    } catch (err) {
+      this.logger.error(`PDF generation failed: ${err.message}`)
+      throw err
+    }
   }
 
   async export(data) {
