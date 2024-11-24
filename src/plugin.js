@@ -51,23 +51,46 @@ class PDFOriginalPlugin {
         })
 
         // Get original dimensions
-        const originalWidth = photo.width
-        const originalHeight = photo.height
+        let width = photo.width
+        let height = photo.height
 
-        // Calculate available space with minimum printable margins
-        const margin = 7.2 // 0.25 inches = ~6.35mm = 7.2 points
-        const pageWidth = doc.page.width - (2 * margin)
-        const pageHeight = doc.page.height - (2 * margin)
+        // Determine if dimensions need to be swapped based on total rotation
+        let totalRotation = photo.angle || 0
+        switch (photo.orientation) {
+          case 3: totalRotation += 180; break;
+          case 6: totalRotation += 90; break;
+          case 8: totalRotation -= 90; break;
+        }
+        
+        // Normalize rotation to 0-360
+        totalRotation = ((totalRotation % 360) + 360) % 360
+        
+        // Swap dimensions if total rotation is 90 or 270 degrees
+        if (totalRotation === 90 || totalRotation === 270) {
+          [width, height] = [height, width]
+        }
 
-        // Calculate scale to fit while maintaining aspect ratio
+        // Calculate available space with different margins based on orientation
+        const minMargin = 7.2    // Minimum margin (0.25 inches) for printer
+        const isLandscape = width > height
+        
+        // Use different margins based on photo orientation
+        const sideMargin = minMargin
+        const topBottomMargin = isLandscape ? 50 : minMargin // Only use large margins for landscape
+
+        // Calculate available space
+        const availableWidth = doc.page.width - (2 * sideMargin)
+        const availableHeight = doc.page.height - (2 * topBottomMargin)
+
+        // Calculate scale to fit within available space
         const scale = Math.min(
-          pageWidth / originalWidth,
-          pageHeight / originalHeight
+          availableWidth / width,
+          availableHeight / height
         )
 
         // Calculate final dimensions
-        const finalWidth = originalWidth * scale
-        const finalHeight = originalHeight * scale
+        const finalWidth = photo.width * scale  // Use original dimensions for drawing
+        const finalHeight = photo.height * scale
 
         // Center on page
         const x = (doc.page.width - finalWidth) / 2
@@ -79,20 +102,20 @@ class PDFOriginalPlugin {
         // Move to center of image position
         doc.translate(x + (finalWidth / 2), y + (finalHeight / 2))
 
-        // Apply rotation based on EXIF orientation
+        // Apply rotations
+        if (photo.angle !== 0) {
+          doc.rotate(photo.angle)
+        }
+
         switch (photo.orientation) {
-          case 3: // 180° rotation (upside down)
+          case 3:
             doc.rotate(180)
             break
-          case 6: // 90° clockwise
-            doc.rotate(-90)  // Changed to negative to match EXIF standard
+          case 6:
+            doc.rotate(90)
             break
-          case 8: // 270° clockwise (90° counterclockwise)
-            doc.rotate(90)   // Changed to match EXIF standard
-            break
-          case 1: // Normal orientation
-          default:
-            // No rotation needed
+          case 8:
+            doc.rotate(-90)
             break
         }
 
